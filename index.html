@@ -604,15 +604,15 @@ function setOFB(id,m,t) { const e=document.getElementById(id);e.className='feedb
 
 // ===== PEER CONFIG =====
 const PEER_CONFIG = {
-  debug: 2,
+  debug: 0,
+  secure: true,
   config: {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
     ]
   }
 };
@@ -678,13 +678,23 @@ function broadcastLobby() {
 function broadcast(d) { conns.forEach(c => { if(c.open) c.send(d); }); }
 
 // ===== ONLINE: JOIN ROOM =====
+let joinAttempts = 0;
+const MAX_JOIN_ATTEMPTS = 3;
+
 function joinRoom() {
   myName = document.getElementById('nickInput').value.trim();
   if (!myName) { setOFB('onlineFb','Enter a nickname','error'); return; }
   roomCode = document.getElementById('codeInput').value.trim().toUpperCase();
   if (!roomCode||roomCode.length!==6) { setOFB('onlineFb','Enter 6-char room code','error'); return; }
   isHost = false; onlineMode = true; conns = [];
-  setOFB('onlineFb','Connecting to server...','info');
+  joinAttempts = 0;
+  attemptJoin();
+}
+
+function attemptJoin() {
+  joinAttempts++;
+  if (peer && !peer.destroyed) peer.destroy();
+  setOFB('onlineFb',`Connecting... (attempt ${joinAttempts}/${MAX_JOIN_ATTEMPTS})`,'info');
 
   peer = new Peer(null, PEER_CONFIG);
   peer.on('open', (myId) => {
@@ -693,14 +703,17 @@ function joinRoom() {
     const conn = peer.connect(pid(roomCode), {reliable:true, serialization:'json'});
 
     let connected = false;
-    // Timeout after 10 seconds
     const timeout = setTimeout(() => {
       if (!connected) {
-        console.error('[JOIN] Connection timeout');
-        setOFB('onlineFb','Connection timed out. Check the room code.','error');
-        if (peer && !peer.destroyed) peer.destroy();
+        console.warn('[JOIN] Connection timeout, attempt', joinAttempts);
+        if (joinAttempts < MAX_JOIN_ATTEMPTS) {
+          attemptJoin();
+        } else {
+          setOFB('onlineFb','Could not connect. Check the room code and try again.','error');
+          if (peer && !peer.destroyed) peer.destroy();
+        }
       }
-    }, 10000);
+    }, 8000);
 
     conn.on('open', () => {
       connected = true;
@@ -719,13 +732,21 @@ function joinRoom() {
     conn.on('error', (err) => {
       clearTimeout(timeout);
       console.error('[JOIN] Connection error:', err);
-      setOFB('onlineFb','Connection failed. Try again.','error');
+      if (joinAttempts < MAX_JOIN_ATTEMPTS) {
+        attemptJoin();
+      } else {
+        setOFB('onlineFb','Connection failed. Try again.','error');
+      }
     });
   });
   peer.on('error', (err) => {
     console.error('[JOIN] Peer error:', err.type, err);
     if (err.type==='peer-unavailable') setOFB('onlineFb','Room not found. Check code.','error');
-    else setOFB('onlineFb','Error: '+err.type,'error');
+    else if (joinAttempts < MAX_JOIN_ATTEMPTS) {
+      attemptJoin();
+    } else {
+      setOFB('onlineFb','Error: '+err.type,'error');
+    }
   });
   peer.on('disconnected', () => {
     console.log('[JOIN] Disconnected from signaling');
