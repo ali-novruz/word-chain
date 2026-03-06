@@ -4,13 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Word Chain</title>
-<script>
-// Ensure WebRTC constructors are available globally before PeerJS loads
-window.RTCPeerConnection = window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection;
-window.RTCSessionDescription = window.RTCSessionDescription || window.webkitRTCSessionDescription;
-window.RTCIceCandidate = window.RTCIceCandidate || window.webkitRTCIceCandidate;
-</script>
-<script src="https://unpkg.com/peerjs@1.3.2/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.3.5/dist/mqtt.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:'Segoe UI',system-ui,sans-serif;background:#111;color:#eee;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px}
@@ -299,8 +293,6 @@ let wordCache = {};
 // ===== ONLINE STATE =====
 let onlineMode = false;
 let isHost = false;
-let peer = null;
-let conns = [];
 let roomCode = '';
 let maxPlayers = 2;
 let myName = '';
@@ -598,7 +590,6 @@ function genCode() {
   for(let i=0;i<6;i++) s+=c[Math.floor(Math.random()*c.length)];
   return s;
 }
-function pid(code) { return 'wordchain-'+code; }
 function setMax(n) {
   maxPlayers = n;
   document.querySelectorAll('.size-btn').forEach((b,i) => b.classList.toggle('active', (i===0&&n===2)||(i===1&&n===3)));
@@ -608,162 +599,200 @@ function copyCode() {
 }
 function setOFB(id,m,t) { const e=document.getElementById(id);e.className='feedback '+t;e.textContent=m; }
 
-// ===== WEBRTC DIAGNOSTIC =====
-try {
-  const testPC = new RTCPeerConnection({iceServers:[]});
-  testPC.close();
-  console.log('[DIAG] RTCPeerConnection OK');
-} catch(e) { console.error('[DIAG] RTCPeerConnection FAILED:', e.message); }
+// ===== MQTT CONFIG =====
+const MQTT_BROKERS = [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt'
+];
+let mqttClient = null;
+let mqttTopic = '';
+let myClientId = '';
+let heartbeatInterval = null;
+let peerHeartbeats = {};
 
-// ===== PEER CONFIG =====
-const PEER_CONFIG = {
-  debug: 0,
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:stun3.l.google.com:19302' },
-      { urls: 'stun:stun4.l.google.com:19302' }
-    ]
-  }
-};
+function mqttConnect(roomCode) {
+  myClientId = 'wc_' + Math.random().toString(36).substr(2,9);
+  mqttTopic = 'wordchain/' + roomCode;
+  return new Promise((resolve, reject) => {
+    let brokerIdx = 0;
+    function tryBroker() {
+      if (brokerIdx >= MQTT_BROKERS.length) { reject(new Error('All brokers failed')); return; }
+      const url = MQTT_BROKERS[brokerIdx];
+      console.log('[MQTT] Trying', url);
+      const client = mqtt.connect(url, {
+        clientId: myClientId,
+        clean: true,
+        connectTimeout: 6000,
+        reconnectPeriod: 3000,
+        will: { topic: mqttTopic, payload: JSON.stringify({type:'leave',cid:myClientId}), qos:1, retain:false }
+      });
+      const timeout = setTimeout(() => {
+        client.end(true);
+        brokerIdx++;
+        tryBroker();
+      }, 7000);
+      client.on('connect', () => {
+        clearTimeout(timeout);
+        client.subscribe(mqttTopic, {qos:1}, (err) => {
+          if (err) { client.end(true); brokerIdx++; tryBroker(); return; }
+          console.log('[MQTT] Connected to', url);
+          resolve(client);
+        });
+      });
+      client.on('error', () => { clearTimeout(timeout); client.end(true); brokerIdx++; tryBroker(); });
+    }
+    tryBroker();
+  });
+}
+
+function mqttSend(data) {
+  if (!mqttClient || !mqttClient.connected) return;
+  data._from = myClientId;
+  data._name = myName;
+  mqttClient.publish(mqttTopic, JSON.stringify(data), {qos:1});
+}
+
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatInterval = setInterval(() => {
+    mqttSend({type:'hb'});
+    // Check for dead peers
+    const now = Date.now();
+    playerOrder.forEach(p => {
+      if (p.cid && p.cid !== myClientId && !eliminated.has(p.name)) {
+        if (peerHeartbeats[p.cid] && now - peerHeartbeats[p.cid] > 12000) {
+          handleMqttDisconnect(p.cid, p.name);
+        }
+      }
+    });
+  }, 4000);
+}
+function stopHeartbeat() { if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; } }
 
 // ===== ONLINE: CREATE ROOM =====
-function createRoom() {
+async function createRoom() {
   myName = document.getElementById('nickInput').value.trim();
   if (!myName) { setOFB('onlineFb','Enter a nickname','error'); return; }
   roomCode = genCode();
-  isHost = true; onlineMode = true; conns = [];
-  playerOrder = [{id:'host',name:myName,index:0}]; myIdx = 0;
+  isHost = true; onlineMode = true;
+  playerOrder = [{cid:myClientId,name:myName,index:0}]; myIdx = 0;
   setOFB('onlineFb','Creating room...','info');
 
-  peer = new Peer(pid(roomCode), PEER_CONFIG);
-  peer.on('open', (id) => {
-    console.log('[HOST] Peer open with id:', id);
+  try {
+    mqttClient = await mqttConnect(roomCode);
+    mqttClient.on('message', (topic, msg) => {
+      try {
+        const data = JSON.parse(msg.toString());
+        if (data._from === myClientId) return; // ignore own messages
+        handleHostMessage(data);
+      } catch(e) {}
+    });
+    mqttClient.on('close', () => {
+      console.log('[HOST] MQTT disconnected');
+      if (mqttClient) mqttClient.reconnect();
+    });
+
     document.getElementById('onlineSetup').classList.remove('active');
     document.getElementById('lobbyScreen').classList.add('active');
     document.getElementById('roomCodeDisp').textContent = roomCode;
     document.getElementById('lobbyStartBtn').style.display = 'block';
     updateLobby();
     setOFB('lobbyFb','Share the room code!','success');
-  });
-  peer.on('connection', (conn) => {
-    console.log('[HOST] Incoming connection from:', conn.peer);
-    handleHostConn(conn);
-  });
-  peer.on('error', (err) => {
-    console.error('[HOST] Peer error:', err.type, err);
-    if (err.type==='unavailable-id') { roomCode=genCode(); peer.destroy(); createRoom(); }
-    else setOFB('onlineFb','Error: '+err.type,'error');
-  });
-  peer.on('disconnected', () => {
-    console.log('[HOST] Disconnected from signaling, reconnecting...');
-    if (peer && !peer.destroyed) peer.reconnect();
-  });
+    // Announce room exists
+    mqttSend({type:'room',maxPlayers,level});
+    startHeartbeat();
+  } catch(e) {
+    console.error('[HOST] MQTT error:', e);
+    setOFB('onlineFb','Could not create room. Try again.','error');
+  }
 }
 
-function handleHostConn(conn) {
-  conn.on('open', () => {
-    if (playerOrder.length >= maxPlayers) { conn.send({type:'error',msg:'Room is full'}); conn.close(); }
-  });
-  conn.on('data', (data) => {
-    if (data.type==='join') {
-      if (playerOrder.length>=maxPlayers) { conn.send({type:'error',msg:'Room is full'}); conn.close(); return; }
-      const pi = playerOrder.length;
-      playerOrder.push({id:conn.peer,name:data.name,index:pi});
-      conn._meta = {name:data.name,index:pi};
-      conns.push(conn);
-      broadcastLobby();
-      updateLobby();
-    }
-    if (data.type==='submit') hostReceive(conn, data);
-  });
-  conn.on('close', () => handleDisconnect(conn));
-  conn.on('error', () => handleDisconnect(conn));
+function handleHostMessage(data) {
+  peerHeartbeats[data._from] = Date.now();
+  if (data.type==='hb') return;
+  if (data.type==='join') {
+    if (playerOrder.length >= maxPlayers) { mqttSend({type:'error',msg:'Room is full',_to:data._from}); return; }
+    if (playerOrder.find(p=>p.cid===data._from)) return; // already joined
+    const pi = playerOrder.length;
+    playerOrder.push({cid:data._from,name:data._name,index:pi});
+    peerHeartbeats[data._from] = Date.now();
+    broadcastLobby();
+    updateLobby();
+  }
+  if (data.type==='submit') hostReceiveMsg(data);
+  if (data.type==='leave') handleMqttDisconnect(data.cid || data._from, data._name);
 }
 
 function broadcastLobby() {
-  const d = {type:'lobby',players:playerOrder.map(p=>({name:p.name,index:p.index})),maxPlayers,level};
-  conns.forEach(c => { if(c.open) c.send(d); });
+  mqttSend({type:'lobby',players:playerOrder.map(p=>({name:p.name,index:p.index,cid:p.cid})),maxPlayers,level});
 }
-function broadcast(d) { conns.forEach(c => { if(c.open) c.send(d); }); }
+function broadcast(d) { mqttSend(d); }
 
 // ===== ONLINE: JOIN ROOM =====
-let joinAttempts = 0;
-const MAX_JOIN_ATTEMPTS = 3;
-
-function joinRoom() {
+async function joinRoom() {
   myName = document.getElementById('nickInput').value.trim();
   if (!myName) { setOFB('onlineFb','Enter a nickname','error'); return; }
   roomCode = document.getElementById('codeInput').value.trim().toUpperCase();
   if (!roomCode||roomCode.length!==6) { setOFB('onlineFb','Enter 6-char room code','error'); return; }
-  isHost = false; onlineMode = true; conns = [];
-  joinAttempts = 0;
-  attemptJoin();
-}
+  isHost = false; onlineMode = true;
+  setOFB('onlineFb','Connecting...','info');
 
-function attemptJoin() {
-  joinAttempts++;
-  if (peer && !peer.destroyed) peer.destroy();
-  setOFB('onlineFb',`Connecting... (attempt ${joinAttempts}/${MAX_JOIN_ATTEMPTS})`,'info');
+  try {
+    mqttClient = await mqttConnect(roomCode);
+    let joined = false;
+    const joinTimeout = setTimeout(() => {
+      if (!joined) {
+        setOFB('onlineFb','Room not found or host offline. Check code.','error');
+        mqttDisconnect();
+      }
+    }, 10000);
 
-  peer = new Peer(null, PEER_CONFIG);
-  peer.on('open', (myId) => {
-    console.log('[JOIN] Peer open with id:', myId);
-    setOFB('onlineFb','Connecting to room ' + roomCode + '...','info');
-    const conn = peer.connect(pid(roomCode), {reliable:true, serialization:'json'});
-
-    let connected = false;
-    const timeout = setTimeout(() => {
-      if (!connected) {
-        console.warn('[JOIN] Connection timeout, attempt', joinAttempts);
-        if (joinAttempts < MAX_JOIN_ATTEMPTS) {
-          attemptJoin();
-        } else {
-          setOFB('onlineFb','Could not connect. Check the room code and try again.','error');
-          if (peer && !peer.destroyed) peer.destroy();
+    mqttClient.on('message', (topic, msg) => {
+      try {
+        const data = JSON.parse(msg.toString());
+        if (data._from === myClientId) return;
+        peerHeartbeats[data._from] = Date.now();
+        if (data.type==='hb') return;
+        if (data._to && data._to !== myClientId) return; // not for us
+        if (data.type==='lobby') {
+          if (!joined) {
+            joined = true;
+            clearTimeout(joinTimeout);
+            document.getElementById('onlineSetup').classList.remove('active');
+            document.getElementById('lobbyScreen').classList.add('active');
+            document.getElementById('roomCodeDisp').textContent = roomCode;
+            document.getElementById('lobbyStartBtn').style.display = 'none';
+            setOFB('lobbyFb','Connected! Waiting for host to start...','success');
+            startHeartbeat();
+          }
+          handleJoinerMsg(data);
         }
-      }
-    }, 8000);
+        else if (data.type==='room' && !joined) {
+          // Room exists, send join
+          mqttSend({type:'join'});
+        }
+        else if (data.type==='start' || data.type==='result' || data.type==='gameover' || data.type==='error') {
+          handleJoinerMsg(data);
+        }
+        else if (data.type==='leave') {
+          // Check if host left
+          const hostPlayer = playerOrder[0];
+          if (hostPlayer && data._from === hostPlayer.cid) hostGone();
+        }
+      } catch(e) {}
+    });
+    mqttClient.on('close', () => {
+      if (mqttClient) mqttClient.reconnect();
+    });
 
-    conn.on('open', () => {
-      connected = true;
-      clearTimeout(timeout);
-      console.log('[JOIN] Connection opened to host');
-      conns = [conn];
-      conn.send({type:'join',name:myName});
-      document.getElementById('onlineSetup').classList.remove('active');
-      document.getElementById('lobbyScreen').classList.add('active');
-      document.getElementById('roomCodeDisp').textContent = roomCode;
-      document.getElementById('lobbyStartBtn').style.display = 'none';
-      setOFB('lobbyFb','Connected! Waiting for host to start...','success');
-    });
-    conn.on('data', handleJoinerMsg);
-    conn.on('close', () => { clearTimeout(timeout); hostGone(); });
-    conn.on('error', (err) => {
-      clearTimeout(timeout);
-      console.error('[JOIN] Connection error:', err);
-      if (joinAttempts < MAX_JOIN_ATTEMPTS) {
-        attemptJoin();
-      } else {
-        setOFB('onlineFb','Connection failed. Try again.','error');
-      }
-    });
-  });
-  peer.on('error', (err) => {
-    console.error('[JOIN] Peer error:', err.type, err);
-    if (err.type==='peer-unavailable') setOFB('onlineFb','Room not found. Check code.','error');
-    else if (joinAttempts < MAX_JOIN_ATTEMPTS) {
-      attemptJoin();
-    } else {
-      setOFB('onlineFb','Error: '+err.type,'error');
-    }
-  });
-  peer.on('disconnected', () => {
-    console.log('[JOIN] Disconnected from signaling');
-    if (peer && !peer.destroyed) peer.reconnect();
-  });
+    // Request room info
+    mqttSend({type:'ping'});
+    // Also send join immediately (host will respond with lobby)
+    setTimeout(() => { if (!joined) mqttSend({type:'join'}); }, 500);
+  } catch(e) {
+    console.error('[JOIN] MQTT error:', e);
+    setOFB('onlineFb','Connection failed. Try again.','error');
+  }
 }
 
 function handleJoinerMsg(data) {
@@ -780,6 +809,24 @@ function handleJoinerMsg(data) {
     case 'gameover': onlineGameOver(data); break;
     case 'error': setOFB('lobbyFb',data.msg,'error'); break;
   }
+}
+
+function handleMqttDisconnect(cid, pname) {
+  if (!onlineMode || !pname) return;
+  if (eliminated.has(pname)) return;
+  eliminated.add(pname);
+  const active = playerOrder.filter(p=>!eliminated.has(p.name));
+  if (active.length<=1) {
+    const w = active.length===1 ? active[0].name : myName;
+    const g = {type:'gameover',winner:w,reason:`${pname} disconnected.`,scores:{...pScores}};
+    if (isHost) broadcast(g);
+    onlineGameOver(g);
+    return;
+  }
+  if (playerOrder[turnIdx]?.name===pname) advTurn();
+  setFB(`${pname} disconnected`,'error');
+  if (isHost) broadcast({type:'result',valid:false,word:'',player:pname,def:'',pts:0,elim:true,gs:getGS()});
+  updateOnlineUI(); updateOnlineTurn();
 }
 
 // ===== LOBBY UI =====
@@ -801,9 +848,10 @@ function updateLobby() {
 }
 
 function leaveLobby() {
+  mqttSend({type:'leave'});
   document.getElementById('lobbyScreen').classList.remove('active');
   document.getElementById('onlineSetup').classList.add('active');
-  destroyPeer();
+  mqttDisconnect();
 }
 
 // ===== ONLINE: HOST START =====
@@ -907,17 +955,17 @@ async function submitOnline() {
     await hostValidate(word,myName);
   } else {
     setFBH('Submitting<span class="spinner"></span>','info');
-    conns[0].send({type:'submit',word});
+    mqttSend({type:'submit',word});
   }
   isSubmitting=false;
   document.getElementById('submitBtn').disabled=false;
 }
 
 // ===== ONLINE: HOST VALIDATION =====
-async function hostReceive(conn, data) {
-  const pn=conn._meta.name;
-  if(playerOrder[turnIdx].name!==pn){conn.send({type:'error',msg:'Not your turn'});return;}
-  await hostValidate(data.word,pn);
+async function hostReceiveMsg(data) {
+  const pn = data._name;
+  if(playerOrder[turnIdx].name!==pn) { mqttSend({type:'error',msg:'Not your turn',_to:data._from}); return; }
+  await hostValidate(data.word, pn);
 }
 
 async function hostValidate(word,pn) {
@@ -1009,22 +1057,6 @@ function onlineGameOver(d) {
 }
 
 // ===== ONLINE: DISCONNECT =====
-function handleDisconnect(conn) {
-  if(!onlineMode) return;
-  const pn=conn._meta?.name; if(!pn) return;
-  conns=conns.filter(c=>c!==conn);
-  eliminated.add(pn);
-  const active=playerOrder.filter(p=>!eliminated.has(p.name));
-  if(active.length<=1){
-    const w=active.length===1?active[0].name:myName;
-    const g={type:'gameover',winner:w,reason:`${pn} disconnected.`,scores:{...pScores}};
-    broadcast(g);onlineGameOver(g);return;
-  }
-  if(playerOrder[turnIdx].name===pn) advTurn();
-  setFB(`${pn} disconnected`,'error');
-  broadcast({type:'result',valid:false,word:'',player:pn,def:'',pts:0,elim:true,gs:getGS()});
-  updateOnlineUI();updateOnlineTurn();
-}
 function hostGone() {
   document.getElementById('wordInput').disabled=true;
   document.getElementById('submitBtn').disabled=true;
@@ -1032,9 +1064,12 @@ function hostGone() {
   document.getElementById('goText').innerHTML='Host disconnected. Game over.';
   document.getElementById('goOverlay').classList.add('show');
 }
-function destroyPeer() {
-  if(peer){peer.destroy();peer=null;} conns=[];onlineMode=false;isHost=false;roomCode='';playerOrder=[];
+function mqttDisconnect() {
+  stopHeartbeat();
+  if(mqttClient){try{mqttClient.end(true);}catch(e){}mqttClient=null;}
+  onlineMode=false;isHost=false;roomCode='';playerOrder=[];peerHeartbeats={};
 }
+function destroyPeer() { mqttDisconnect(); }
 
 // ===== KEYBOARD =====
 document.getElementById('wordInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitWord();}});
