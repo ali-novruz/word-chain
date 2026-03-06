@@ -602,6 +602,20 @@ function copyCode() {
 }
 function setOFB(id,m,t) { const e=document.getElementById(id);e.className='feedback '+t;e.textContent=m; }
 
+// ===== PEER CONFIG =====
+const PEER_CONFIG = {
+  debug: 1,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
+    ]
+  }
+};
+
 // ===== ONLINE: CREATE ROOM =====
 function createRoom() {
   myName = document.getElementById('nickInput').value.trim();
@@ -611,8 +625,9 @@ function createRoom() {
   playerOrder = [{id:'host',name:myName,index:0}]; myIdx = 0;
   setOFB('onlineFb','Creating room...','info');
 
-  peer = new Peer(pid(roomCode));
-  peer.on('open', () => {
+  peer = new Peer(pid(roomCode), PEER_CONFIG);
+  peer.on('open', (id) => {
+    console.log('[HOST] Peer open with id:', id);
     document.getElementById('onlineSetup').classList.remove('active');
     document.getElementById('lobbyScreen').classList.add('active');
     document.getElementById('roomCodeDisp').textContent = roomCode;
@@ -620,10 +635,18 @@ function createRoom() {
     updateLobby();
     setOFB('lobbyFb','Share the room code!','success');
   });
-  peer.on('connection', handleHostConn);
+  peer.on('connection', (conn) => {
+    console.log('[HOST] Incoming connection from:', conn.peer);
+    handleHostConn(conn);
+  });
   peer.on('error', (err) => {
+    console.error('[HOST] Peer error:', err.type, err);
     if (err.type==='unavailable-id') { roomCode=genCode(); peer.destroy(); createRoom(); }
     else setOFB('onlineFb','Error: '+err.type,'error');
+  });
+  peer.on('disconnected', () => {
+    console.log('[HOST] Disconnected from signaling, reconnecting...');
+    if (peer && !peer.destroyed) peer.reconnect();
   });
 }
 
@@ -660,26 +683,52 @@ function joinRoom() {
   roomCode = document.getElementById('codeInput').value.trim().toUpperCase();
   if (!roomCode||roomCode.length!==6) { setOFB('onlineFb','Enter 6-char room code','error'); return; }
   isHost = false; onlineMode = true; conns = [];
-  setOFB('onlineFb','Connecting...','info');
+  setOFB('onlineFb','Connecting to server...','info');
 
-  peer = new Peer();
-  peer.on('open', () => {
-    const conn = peer.connect(pid(roomCode), {reliable:true});
+  peer = new Peer(null, PEER_CONFIG);
+  peer.on('open', (myId) => {
+    console.log('[JOIN] Peer open with id:', myId);
+    setOFB('onlineFb','Connecting to room ' + roomCode + '...','info');
+    const conn = peer.connect(pid(roomCode), {reliable:true, serialization:'json'});
+
+    let connected = false;
+    // Timeout after 10 seconds
+    const timeout = setTimeout(() => {
+      if (!connected) {
+        console.error('[JOIN] Connection timeout');
+        setOFB('onlineFb','Connection timed out. Check the room code.','error');
+        if (peer && !peer.destroyed) peer.destroy();
+      }
+    }, 10000);
+
     conn.on('open', () => {
+      connected = true;
+      clearTimeout(timeout);
+      console.log('[JOIN] Connection opened to host');
       conns = [conn];
       conn.send({type:'join',name:myName});
       document.getElementById('onlineSetup').classList.remove('active');
       document.getElementById('lobbyScreen').classList.add('active');
       document.getElementById('roomCodeDisp').textContent = roomCode;
       document.getElementById('lobbyStartBtn').style.display = 'none';
+      setOFB('lobbyFb','Connected! Waiting for host to start...','success');
     });
     conn.on('data', handleJoinerMsg);
-    conn.on('close', () => hostGone());
-    conn.on('error', () => setOFB('onlineFb','Connection failed','error'));
+    conn.on('close', () => { clearTimeout(timeout); hostGone(); });
+    conn.on('error', (err) => {
+      clearTimeout(timeout);
+      console.error('[JOIN] Connection error:', err);
+      setOFB('onlineFb','Connection failed. Try again.','error');
+    });
   });
   peer.on('error', (err) => {
-    if (err.type==='peer-unavailable') setOFB('onlineFb','Room not found','error');
+    console.error('[JOIN] Peer error:', err.type, err);
+    if (err.type==='peer-unavailable') setOFB('onlineFb','Room not found. Check code.','error');
     else setOFB('onlineFb','Error: '+err.type,'error');
+  });
+  peer.on('disconnected', () => {
+    console.log('[JOIN] Disconnected from signaling');
+    if (peer && !peer.destroyed) peer.reconnect();
   });
 }
 
