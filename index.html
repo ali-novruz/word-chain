@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Word Chain</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#111;color:#eee;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px}
+  h1{font-size:2rem;font-weight:700;color:#f5a623;letter-spacing:3px}
+  .sub{color:#666;font-size:.78rem;margin-bottom:24px;text-align:center}
+  .hidden{display:none!important}
+
+  /* Mode select */
+  .mode-screen{display:flex;flex-direction:column;align-items:center;gap:16px;margin-top:32px}
+  .mode-label{font-size:.65rem;text-transform:uppercase;letter-spacing:2px;color:#666}
+  .mode-cards{display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
+  .mode-card{width:160px;background:#1a1a1a;border:2px solid #2a2a2a;border-radius:14px;padding:24px 16px;text-align:center;cursor:pointer;transition:all .2s}
+  .mode-card:hover{border-color:#f5a623;transform:translateY(-3px);box-shadow:0 6px 20px rgba(245,166,35,.12)}
+  .mode-icon{font-size:2rem;margin-bottom:10px}
+  .mode-title{font-size:.9rem;font-weight:700;color:#f5a623;margin-bottom:4px;letter-spacing:1px}
+  .mode-desc{font-size:.65rem;color:#888;line-height:1.4}
+
+  /* Level select */
+  .level-screen{display:none;flex-direction:column;align-items:center;gap:16px;margin-top:32px;width:100%;max-width:440px}
+  .level-screen.active{display:flex}
+  .level-grid{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}
+  .level-btn{width:120px;padding:14px 8px;background:#1a1a1a;border:2px solid #2a2a2a;border-radius:12px;text-align:center;cursor:pointer;transition:all .2s}
+  .level-btn:hover{border-color:#f5a623}
+  .level-btn.active{border-color:#f5a623;background:rgba(245,166,35,.08)}
+  .level-btn .lvl{font-size:1.1rem;font-weight:800;color:#f5a623;letter-spacing:1px}
+  .level-btn .lvl-name{font-size:.6rem;color:#888;margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+  .level-info{font-size:.7rem;color:#666;text-align:center;min-height:18px}
+
+  /* Online screens */
+  .online-screen{display:none;flex-direction:column;align-items:center;gap:14px;margin-top:32px;width:100%;max-width:400px}
+  .online-screen.active{display:flex}
+  .online-input{background:#1a1a1a;border:2px solid #333;border-radius:10px;padding:13px 16px;font-size:1rem;font-weight:600;color:#f5a623;letter-spacing:2px;text-transform:uppercase;outline:none;width:100%;text-align:center;transition:border-color .2s}
+  .online-input:focus{border-color:#f5a623}
+  .online-input::placeholder{color:#444;text-transform:none;letter-spacing:0;font-weight:400}
+  .room-code-display{font-size:2rem;font-weight:800;color:#f5a623;letter-spacing:8px;background:#1a1a1a;border:2px dashed #f5a623;border-radius:14px;padding:14px 28px;cursor:pointer;transition:all .2s}
+  .room-code-display:hover{background:#222}
+  .lobby-players{width:100%}
+  .lobby-player{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;margin-bottom:6px}
+  .player-dot{width:10px;height:10px;border-radius:50%}
+  .player-name{font-weight:600;font-size:.85rem;flex:1}
+  .host-badge{font-size:.55rem;text-transform:uppercase;letter-spacing:1px;color:#f5a623;background:rgba(245,166,35,.1);padding:2px 8px;border-radius:4px}
+  .online-or{color:#444;font-size:.75rem;font-weight:700}
+  .size-toggle{display:flex;gap:0;border-radius:10px;overflow:hidden;border:1px solid #333}
+  .size-btn{padding:10px 20px;background:#1a1a1a;color:#888;border:none;cursor:pointer;font-size:.8rem;font-weight:600;transition:all .2s}
+  .size-btn.active{background:#f5a623;color:#111}
+
+  /* Game screen */
+  .game-screen{display:none;flex-direction:column;align-items:center;width:100%}
+  .game-screen.active{display:flex}
+  .stats{display:flex;gap:24px;margin-bottom:20px;flex-wrap:wrap;justify-content:center}
+  .stat-box{text-align:center}
+  .stat-box .label{font-size:.55rem;text-transform:uppercase;letter-spacing:1.5px;color:#666}
+  .stat-box .value{font-size:1.3rem;font-weight:700;color:#f5a623}
+  .stat-box .value.p0{color:#4caf50}.stat-box .value.p1{color:#e74c3c}.stat-box .value.p2{color:#9b59b6}
+
+  .turn-ind{margin-bottom:14px;padding:7px 18px;border-radius:20px;font-size:.7rem;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+  .turn-ind.t0{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50}
+  .turn-ind.t1{background:rgba(231,76,60,.12);border:1px solid rgba(231,76,60,.3);color:#e74c3c}
+  .turn-ind.t2{background:rgba(155,89,182,.12);border:1px solid rgba(155,89,182,.3);color:#9b59b6}
+  .turn-ind.tbot{background:rgba(231,76,60,.12);border:1px solid rgba(231,76,60,.3);color:#e74c3c}
+  .turn-ind.tyou{background:rgba(76,175,80,.12);border:1px solid rgba(76,175,80,.3);color:#4caf50}
+
+  .prompt-area{margin-bottom:18px;text-align:center}
+  .prompt-label{font-size:.6rem;text-transform:uppercase;letter-spacing:1.5px;color:#666;margin-bottom:6px}
+  .prompt-letter{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;background:#1a1a1a;border:3px solid #f5a623;border-radius:14px;font-size:2.2rem;font-weight:800;color:#f5a623;text-transform:uppercase;box-shadow:0 0 20px rgba(245,166,35,.15)}
+
+  .input-area{display:flex;gap:10px;margin-bottom:10px;width:100%;max-width:400px}
+  .word-input{flex:1;background:#1a1a1a;border:2px solid #333;border-radius:10px;padding:13px 16px;font-size:1rem;font-weight:600;color:#f5a623;letter-spacing:2px;text-transform:uppercase;outline:none;transition:border-color .2s}
+  .word-input::placeholder{color:#444;letter-spacing:0;text-transform:none;font-weight:400}
+  .word-input:focus{border-color:#f5a623}
+  .word-input:disabled{opacity:.4;cursor:not-allowed}
+
+  button{padding:11px 22px;border:none;border-radius:10px;font-size:.8rem;font-weight:700;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:1px}
+  .btn-go{background:#f5a623;color:#111;min-width:56px}
+  .btn-go:hover{background:#ffb840}
+  .btn-go:disabled{background:#333;color:#666;cursor:default}
+  .btn-full{width:100%;padding:13px;font-size:.85rem}
+  .btn-sec{background:#1a1a1a;color:#888;border:1px solid #333}
+  .btn-sec:hover{border-color:#f5a623;color:#f5a623}
+
+  .feedback{min-height:20px;margin-bottom:14px;font-size:.75rem;font-weight:600;text-align:center;max-width:420px}
+  .feedback.success{color:#4caf50}.feedback.error{color:#e74c3c}.feedback.info{color:#f5a623}.feedback.bot-msg{color:#e74c3c}
+
+  .chain-section{width:100%;max-width:500px;margin-top:4px}
+  .chain-header{font-size:.55rem;text-transform:uppercase;letter-spacing:1.5px;color:#666;margin-bottom:8px}
+  .chain{display:flex;flex-wrap:wrap;gap:0;align-items:center}
+  .chain-word{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:7px;padding:5px 11px;font-size:.72rem;font-weight:600;color:#ccc;letter-spacing:1px;text-transform:uppercase;margin:2px 0}
+  .chain-word .ll{color:#f5a623;font-weight:800}
+  .chain-word.latest{border-color:#f5a623;color:#f5a623;box-shadow:0 0 10px rgba(245,166,35,.1)}
+  .chain-word.cw-p0{border-color:#4caf50;color:#4caf50}.chain-word.cw-p0 .ll{color:#66cc77}
+  .chain-word.cw-p1{border-color:#e74c3c;color:#e74c3c}.chain-word.cw-p1 .ll{color:#ff6b5a}
+  .chain-word.cw-p2{border-color:#9b59b6;color:#9b59b6}.chain-word.cw-p2 .ll{color:#b07cc6}
+  .chain-arrow{color:#333;font-size:.8rem;padding:0 3px}
+
+  .btn-row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;justify-content:center}
+  .hint{color:#444;font-size:.6rem;margin-top:12px}
+
+  .spinner{display:inline-block;width:13px;height:13px;border:2px solid #333;border-top-color:#f5a623;border-radius:50%;animation:spin .6s linear infinite;margin-left:6px;vertical-align:middle}
+  .spinner.red{border-top-color:#e74c3c}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Overlays */
+  .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10;align-items:center;justify-content:center}
+  .overlay.show{display:flex}
+  .ov-box{background:#1a1a1a;border:1px solid #333;border-radius:16px;padding:28px 32px;max-width:360px;width:90%;text-align:center}
+  .ov-box h2{color:#f5a623;font-size:1.1rem;margin-bottom:8px;letter-spacing:1px}
+  .ov-box .rt{font-size:.8rem;color:#aaa;margin-bottom:14px;line-height:1.6}
+  .ov-box .rt strong{color:#f5a623}
+  .rules-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10;align-items:center;justify-content:center}
+  .rules-overlay.show{display:flex}
+  .rules-box{background:#1a1a1a;border:1px solid #333;border-radius:14px;padding:24px 28px;max-width:360px;width:90%}
+  .rules-box h2{color:#f5a623;font-size:1rem;margin-bottom:10px;letter-spacing:1px}
+  .rules-box p{color:#aaa;font-size:.75rem;line-height:1.5;margin-bottom:8px}
+  .rules-box .pt{margin:8px 0}
+  .rules-box .pr{display:flex;justify-content:space-between;color:#888;font-size:.7rem;padding:2px 0;border-bottom:1px solid #222}
+  .rules-box .pr span:last-child{color:#f5a623;font-weight:700}
+
+  .lvl-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.6rem;font-weight:700;letter-spacing:1px;background:rgba(245,166,35,.1);color:#f5a623;margin-left:6px}
+</style>
+</head>
+<body>
+
+<h1>WORD CHAIN</h1>
+<p class="sub">Build word chains &middot; verified against English dictionary</p>
+
+<!-- MODE SELECT -->
+<div class="mode-screen" id="modeScreen">
+  <div class="mode-label">Choose Mode</div>
+  <div class="mode-cards">
+    <div class="mode-card" onclick="pickMode('solo')">
+      <div class="mode-icon">&#9998;</div>
+      <div class="mode-title">SOLO</div>
+      <div class="mode-desc">Play alone, build the longest chain</div>
+    </div>
+    <div class="mode-card" onclick="pickMode('bot')">
+      <div class="mode-icon">&#9876;</div>
+      <div class="mode-title">VS BOT</div>
+      <div class="mode-desc">Take turns against a bot</div>
+    </div>
+    <div class="mode-card" onclick="pickMode('online')">
+      <div class="mode-icon">&#127760;</div>
+      <div class="mode-title">ONLINE</div>
+      <div class="mode-desc">Play with friends via room code</div>
+    </div>
+  </div>
+</div>
+
+<!-- LEVEL SELECT -->
+<div class="level-screen" id="levelScreen">
+  <div class="mode-label">Select Difficulty</div>
+  <div class="level-grid" id="levelGrid">
+    <div class="level-btn active" onclick="pickLevel('A1')"><div class="lvl">A1</div><div class="lvl-name">Beginner</div></div>
+    <div class="level-btn" onclick="pickLevel('A2')"><div class="lvl">A2</div><div class="lvl-name">Elementary</div></div>
+    <div class="level-btn" onclick="pickLevel('B1')"><div class="lvl">B1</div><div class="lvl-name">Intermediate</div></div>
+    <div class="level-btn" onclick="pickLevel('B2')"><div class="lvl">B2</div><div class="lvl-name">Upper Int.</div></div>
+    <div class="level-btn" onclick="pickLevel('C1')"><div class="lvl">C1</div><div class="lvl-name">Advanced</div></div>
+    <div class="level-btn" onclick="pickLevel('C2')"><div class="lvl">C2</div><div class="lvl-name">Proficiency</div></div>
+  </div>
+  <div class="level-info" id="levelInfo">Very common everyday words</div>
+  <button class="btn-go btn-full" onclick="confirmLevel()">Start Game</button>
+  <button class="btn-sec btn-full" onclick="backFromLevel()">Back</button>
+</div>
+
+<!-- ONLINE SETUP -->
+<div class="online-screen" id="onlineSetup">
+  <div class="mode-label">Your Nickname</div>
+  <input type="text" class="online-input" id="nickInput" placeholder="Enter nickname..." maxlength="12">
+  <div class="mode-label">Create a Room</div>
+  <div class="size-toggle">
+    <button class="size-btn active" onclick="setMax(2)">2 Players</button>
+    <button class="size-btn" onclick="setMax(3)">3 Players</button>
+  </div>
+  <button class="btn-go btn-full" onclick="createRoom()">Create Room</button>
+  <div class="online-or">- OR -</div>
+  <div class="mode-label">Join a Room</div>
+  <input type="text" class="online-input" id="codeInput" placeholder="Enter room code..." maxlength="6">
+  <button class="btn-go btn-full" onclick="joinRoom()">Join Room</button>
+  <button class="btn-sec btn-full" onclick="backFromOnline()">Back</button>
+  <div class="feedback" id="onlineFb"></div>
+</div>
+
+<!-- LOBBY -->
+<div class="online-screen" id="lobbyScreen">
+  <div class="mode-label">Room Code (tap to copy)</div>
+  <div class="room-code-display" id="roomCodeDisp" onclick="copyCode()">------</div>
+  <div class="mode-label" id="lobbyLabel">Players (0/2)</div>
+  <div class="lobby-players" id="lobbyPlayers"></div>
+  <div class="feedback info" id="lobbyWait">Waiting for players<span class="spinner"></span></div>
+  <button class="btn-go btn-full" id="lobbyStartBtn" onclick="hostStart()" disabled style="display:none">Start Game</button>
+  <button class="btn-sec btn-full" onclick="leaveLobby()">Leave</button>
+  <div class="feedback" id="lobbyFb"></div>
+</div>
+
+<!-- GAME SCREEN -->
+<div class="game-screen" id="gameScreen">
+  <div class="turn-ind hidden" id="turnInd">YOUR TURN</div>
+  <div class="stats" id="statsBar"></div>
+  <div class="prompt-area">
+    <div class="prompt-label">Next word must start with</div>
+    <div class="prompt-letter" id="promptLetter">?</div>
+  </div>
+  <div class="input-area">
+    <input type="text" class="word-input" id="wordInput" placeholder="Type a word..." autocomplete="off" autofocus>
+    <button class="btn-go" id="submitBtn" onclick="submitWord()">Go</button>
+  </div>
+  <div class="feedback" id="feedback"></div>
+  <div class="btn-row">
+    <button class="btn-sec" onclick="backToMenu()">Menu</button>
+    <button class="btn-sec" id="restartBtn" onclick="restartGame()">Restart</button>
+    <button class="btn-sec" onclick="showRules()">Rules</button>
+  </div>
+  <div class="chain-section">
+    <div class="chain-header" id="chainHeader">Chain</div>
+    <div class="chain" id="chainDisplay"></div>
+  </div>
+  <p class="hint">Press Enter to submit</p>
+</div>
+
+<!-- GAME OVER -->
+<div class="overlay" id="goOverlay">
+  <div class="ov-box">
+    <h2 id="goTitle">GAME OVER</h2>
+    <div class="rt" id="goText"></div>
+    <button class="btn-go btn-full" style="margin-bottom:8px" onclick="onGoPlay()">Play Again</button>
+    <button class="btn-sec btn-full" onclick="backToMenu();closeGo()">Back to Menu</button>
+  </div>
+</div>
+
+<!-- RULES -->
+<div class="rules-overlay" id="rulesOv" onclick="hideRules()">
+  <div class="rules-box" onclick="event.stopPropagation()">
+    <h2>HOW TO PLAY</h2>
+    <p>Each new word must start with the <strong style="color:#f5a623">last letter</strong> of the previous word.</p>
+    <p>All words verified against English dictionary. No repeats. Min 2 letters.</p>
+    <p><strong style="color:#f5a623">Solo:</strong> Build the longest chain.</p>
+    <p><strong style="color:#e74c3c">VS Bot:</strong> Take turns — bot uses words from Datamuse API at your selected difficulty level.</p>
+    <p><strong style="color:#9b59b6">Online:</strong> Play with 2-3 friends via room code. 3 invalid words = eliminated!</p>
+    <div class="pt">
+      <div class="pr"><span>2 letters</span><span>+1</span></div>
+      <div class="pr"><span>3 letters</span><span>+2</span></div>
+      <div class="pr"><span>4 letters</span><span>+4</span></div>
+      <div class="pr"><span>5 letters</span><span>+7</span></div>
+      <div class="pr"><span>6 letters</span><span>+10</span></div>
+      <div class="pr"><span>7+ letters</span><span>+15</span></div>
+    </div>
+    <button class="btn-go btn-full" style="margin-top:12px" onclick="hideRules()">Got it</button>
+  </div>
+</div>
+
+<script>
+// ===== CONSTANTS =====
+const STARTERS = ['apple','beach','cloud','dance','earth','flame','grape','house','ivory','jewel','knife','light','music','night','ocean','piano','queen','river','stone','table','unity','vivid','water','young','zebra'];
+const PCOLORS = ['#4caf50','#e74c3c','#9b59b6'];
+const LEVEL_FREQ = {
+  A1: [30, Infinity],
+  A2: [10, 30],
+  B1: [3, 10],
+  B2: [1, 3],
+  C1: [0.3, 1],
+  C2: [0, 0.3]
+};
+const LEVEL_DESC = {
+  A1: 'Very common everyday words',
+  A2: 'Common elementary words',
+  B1: 'Moderately common words',
+  B2: 'Less common, richer vocabulary',
+  C1: 'Advanced uncommon words',
+  C2: 'Rare and sophisticated words'
+};
+
+// ===== GAME STATE =====
+let mode = '';       // solo, bot, online
+let level = 'A1';
+let chain = [];
+let chainOwners = [];
+let usedWords = new Set();
+let pScore = 0, botScore = 0, bestChain = 0;
+let requiredLetter = '';
+let isSubmitting = false;
+let isPlayerTurn = true;
+let missCount = 0;
+
+// Datamuse word cache: { 'a': [{word, freq},...], ... }
+let wordCache = {};
+
+// ===== ONLINE STATE =====
+let onlineMode = false;
+let isHost = false;
+let peer = null;
+let conns = [];
+let roomCode = '';
+let maxPlayers = 2;
+let myName = '';
+let playerOrder = [];
+let myIdx = -1;
+let turnIdx = 0;
+let pScores = {};
+let pMisses = {};
+let eliminated = new Set();
+
+// ===== DATAMUSE API =====
+async function fetchWords(letter) {
+  if (wordCache[letter]) return wordCache[letter];
+  try {
+    const r = await fetch(`https://api.datamuse.com/words?sp=${letter}*&md=f&max=150`);
+    const data = await r.json();
+    const words = data
+      .filter(w => /^[a-z]+$/.test(w.word) && w.word.length >= 2 && w.tags && w.tags.length)
+      .map(w => {
+        const fTag = w.tags.find(t => t.startsWith('f:'));
+        return { word: w.word, freq: fTag ? parseFloat(fTag.slice(2)) : 0 };
+      });
+    wordCache[letter] = words;
+    return words;
+  } catch(e) {
+    return wordCache[letter] || [];
+  }
+}
+
+function filterByLevel(words, lvl) {
+  const [min, max] = LEVEL_FREQ[lvl] || [0, Infinity];
+  return words.filter(w => w.freq >= min && w.freq < max);
+}
+
+async function getBotWord(letter, lvl) {
+  const all = await fetchWords(letter.toLowerCase());
+  let pool = filterByLevel(all, lvl).filter(w => !usedWords.has(w.word));
+  // fallback: try adjacent levels if pool is empty
+  if (!pool.length) {
+    const levels = Object.keys(LEVEL_FREQ);
+    const idx = levels.indexOf(lvl);
+    for (let d = 1; d < levels.length; d++) {
+      if (idx - d >= 0) { pool = filterByLevel(all, levels[idx-d]).filter(w => !usedWords.has(w.word)); if (pool.length) break; }
+      if (idx + d < levels.length) { pool = filterByLevel(all, levels[idx+d]).filter(w => !usedWords.has(w.word)); if (pool.length) break; }
+    }
+  }
+  // ultimate fallback: any unused word with that letter
+  if (!pool.length) pool = all.filter(w => !usedWords.has(w.word));
+  if (!pool.length) return null;
+  return pool[Math.floor(Math.random() * pool.length)].word;
+}
+
+// ===== DICTIONARY CHECK =====
+async function checkDict(word) {
+  const r = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+  if (r.ok) {
+    const d = await r.json();
+    let def = '';
+    try { def = d[0].meanings[0].definitions[0].definition; if (def.length > 50) def = def.slice(0,47)+'...'; } catch(e){}
+    return { valid: true, def };
+  }
+  return { valid: false, def: '' };
+}
+
+function calcPts(w) { const l=w.length; if(l<=2)return 1;if(l===3)return 2;if(l===4)return 4;if(l===5)return 7;if(l===6)return 10;return 15; }
+
+// ===== SCREEN NAV =====
+function pickMode(m) {
+  mode = m;
+  document.getElementById('modeScreen').classList.add('hidden');
+  if (m === 'online') {
+    document.getElementById('levelScreen').classList.add('active');
+    document.getElementById('levelScreen').dataset.next = 'online';
+  } else {
+    document.getElementById('levelScreen').classList.add('active');
+    document.getElementById('levelScreen').dataset.next = m;
+  }
+}
+function pickLevel(l) {
+  level = l;
+  document.querySelectorAll('.level-btn').forEach(b => b.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  document.getElementById('levelInfo').textContent = LEVEL_DESC[l];
+}
+function confirmLevel() {
+  const next = document.getElementById('levelScreen').dataset.next;
+  document.getElementById('levelScreen').classList.remove('active');
+  if (next === 'online') {
+    document.getElementById('onlineSetup').classList.add('active');
+  } else {
+    startLocalGame(next);
+  }
+}
+function backFromLevel() {
+  document.getElementById('levelScreen').classList.remove('active');
+  document.getElementById('modeScreen').classList.remove('hidden');
+}
+function backFromOnline() {
+  document.getElementById('onlineSetup').classList.remove('active');
+  document.getElementById('levelScreen').classList.add('active');
+  document.getElementById('levelScreen').dataset.next = 'online';
+  destroyPeer();
+}
+function backToMenu() {
+  document.getElementById('gameScreen').classList.remove('active');
+  document.getElementById('lobbyScreen').classList.remove('active');
+  document.getElementById('onlineSetup').classList.remove('active');
+  document.getElementById('levelScreen').classList.remove('active');
+  document.getElementById('modeScreen').classList.remove('hidden');
+  destroyPeer();
+  mode = '';
+  onlineMode = false;
+}
+
+// ===== LOCAL GAME (solo/bot) =====
+function startLocalGame(m) {
+  mode = m;
+  onlineMode = false;
+  const starter = STARTERS[Math.floor(Math.random() * STARTERS.length)];
+  chain = [starter]; chainOwners = ['start']; usedWords = new Set([starter]);
+  pScore = 0; botScore = 0; missCount = 0; isPlayerTurn = true; isSubmitting = false;
+  requiredLetter = starter[starter.length-1].toUpperCase();
+
+  document.getElementById('gameScreen').classList.add('active');
+  buildLocalStats();
+  updateLocalUI();
+  setTurn();
+  setFB(`Chain started with "${starter}" — your turn!`, 'info');
+  document.getElementById('wordInput').value = '';
+  document.getElementById('wordInput').disabled = false;
+  document.getElementById('submitBtn').disabled = false;
+  document.getElementById('restartBtn').style.display = '';
+  document.getElementById('wordInput').focus();
+}
+
+function buildLocalStats() {
+  const bar = document.getElementById('statsBar');
+  if (mode === 'solo') {
+    bar.innerHTML = `<div class="stat-box"><div class="label">Score</div><div class="value" id="sv">0</div></div>
+      <div class="stat-box"><div class="label">Chain</div><div class="value" id="cl">0</div></div>
+      <div class="stat-box"><div class="label">Best</div><div class="value" id="bv">0</div></div>
+      <div class="stat-box"><div class="label">Level</div><div class="value"><span class="lvl-badge">${level}</span></div></div>`;
+  } else {
+    bar.innerHTML = `<div class="stat-box"><div class="label">You</div><div class="value p0" id="ys">0</div></div>
+      <div class="stat-box"><div class="label">Chain</div><div class="value" id="cl">0</div></div>
+      <div class="stat-box"><div class="label">Bot</div><div class="value p1" id="bs">0</div></div>
+      <div class="stat-box"><div class="label">Level</div><div class="value"><span class="lvl-badge">${level}</span></div></div>`;
+  }
+}
+
+function updateLocalUI() {
+  if (mode === 'solo') {
+    const sv = document.getElementById('sv'); if(sv) sv.textContent = pScore;
+    bestChain = Math.max(bestChain, chain.length);
+    const bv = document.getElementById('bv'); if(bv) bv.textContent = bestChain;
+  } else {
+    const ys = document.getElementById('ys'); if(ys) ys.textContent = pScore;
+    const bs = document.getElementById('bs'); if(bs) bs.textContent = botScore;
+  }
+  const cl = document.getElementById('cl'); if(cl) cl.textContent = chain.length;
+  document.getElementById('promptLetter').textContent = requiredLetter;
+  renderLocalChain();
+}
+
+function renderLocalChain() {
+  const el = document.getElementById('chainDisplay');
+  el.innerHTML = '';
+  chain.forEach((w,i) => {
+    if (i>0) { const a=document.createElement('span');a.className='chain-arrow';a.textContent='\u2192';el.appendChild(a); }
+    const we = document.createElement('span');
+    let cls = 'chain-word';
+    if (i===chain.length-1) cls += ' latest';
+    if (mode==='bot' && chainOwners[i]==='bot') cls += ' cw-p1';
+    if (mode==='bot' && chainOwners[i]==='you') cls += ' cw-p0';
+    we.className = cls;
+    const lt = w.toUpperCase().split('');
+    let h = '';
+    lt.forEach((l,j) => { h += (j===0||j===lt.length-1) ? `<span class="ll">${l}</span>` : l; });
+    we.innerHTML = h;
+    el.appendChild(we);
+  });
+}
+
+function setTurn() {
+  const ti = document.getElementById('turnInd');
+  if (mode==='solo') { ti.classList.add('hidden'); return; }
+  ti.classList.remove('hidden');
+  if (mode==='bot') {
+    ti.textContent = isPlayerTurn ? 'YOUR TURN' : 'BOT IS THINKING...';
+    ti.className = 'turn-ind ' + (isPlayerTurn ? 'tyou' : 'tbot');
+  }
+}
+
+// ===== SUBMIT WORD =====
+async function submitWord() {
+  if (isSubmitting) return;
+
+  // ONLINE MODE
+  if (onlineMode) { await submitOnline(); return; }
+
+  // LOCAL MODES
+  if (mode==='bot' && !isPlayerTurn) return;
+  const input = document.getElementById('wordInput');
+  const word = input.value.trim().toLowerCase();
+  if (!word||word.length<2) { setFB('Min 2 letters','error'); return; }
+  if (word[0].toUpperCase()!==requiredLetter) { setFB(`Must start with "${requiredLetter}"`,'error'); input.select(); return; }
+  if (usedWords.has(word)) { setFB(`"${word}" already used!`,'error'); input.select(); return; }
+  if (!/^[a-z]+$/.test(word)) { setFB('Only letters allowed','error'); return; }
+
+  isSubmitting = true;
+  document.getElementById('submitBtn').disabled = true;
+  setFBH('Checking dictionary<span class="spinner"></span>','info');
+
+  try {
+    const res = await checkDict(word);
+    if (res.valid) {
+      missCount = 0;
+      const pts = calcPts(word);
+      pScore += pts;
+      chain.push(word); chainOwners.push('you'); usedWords.add(word);
+      requiredLetter = word[word.length-1].toUpperCase();
+      setFB(`+${pts} pts! "${word}"${res.def?' — '+res.def:''}`,'success');
+      input.value = '';
+      updateLocalUI();
+      if (mode==='bot') {
+        isPlayerTurn = false; setTurn();
+        input.disabled = true;
+        setTimeout(() => botTurn(), 1000+Math.random()*800);
+      }
+    } else {
+      setFB(`"${word}" not found in dictionary`,'error');
+      input.select();
+      if (mode==='bot') { missCount++; if (missCount>=3) localGameOver(false,`3 invalid attempts in a row.`); }
+    }
+  } catch(e) { setFB('Network error','error'); }
+
+  isSubmitting = false;
+  document.getElementById('submitBtn').disabled = false;
+  input.focus();
+}
+
+// ===== BOT TURN =====
+async function botTurn() {
+  setFBH('Bot is thinking<span class="spinner red"></span>','bot-msg');
+  const word = await getBotWord(requiredLetter, level);
+  if (!word) { localGameOver(true,`Bot couldn't find a word starting with "${requiredLetter}".`); return; }
+
+  // Verify the word in dictionary
+  const res = await checkDict(word);
+  if (res.valid) {
+    const pts = calcPts(word);
+    botScore += pts;
+    chain.push(word); chainOwners.push('bot'); usedWords.add(word);
+    requiredLetter = word[word.length-1].toUpperCase();
+    setFB(`Bot played "${word}" (+${pts})${res.def?' — '+res.def:''}`,'bot-msg');
+    updateLocalUI();
+  } else {
+    // Rare: Datamuse word not in dictionary — bot loses
+    localGameOver(true,`Bot played "${word}" but it wasn't in the dictionary!`);
+    return;
+  }
+
+  isPlayerTurn = true; missCount = 0; setTurn();
+  document.getElementById('wordInput').disabled = false;
+  document.getElementById('wordInput').focus();
+}
+
+function localGameOver(won, reason) {
+  document.getElementById('wordInput').disabled = true;
+  document.getElementById('submitBtn').disabled = true;
+  const t = document.getElementById('goTitle');
+  const tx = document.getElementById('goText');
+  t.textContent = won ? 'YOU WIN!' : 'YOU LOSE';
+  t.style.color = won ? '#4caf50' : '#e74c3c';
+  tx.innerHTML = `${reason}<br><br>Your score: <strong>${pScore}</strong> &middot; Bot: <strong>${botScore}</strong><br>Chain: <strong>${chain.length}</strong> words`;
+  document.getElementById('goOverlay').classList.add('show');
+}
+
+function restartGame() {
+  if (onlineMode) { backToMenu(); return; }
+  startLocalGame(mode);
+}
+function onGoPlay() { if(onlineMode){backToMenu();}else{restartGame();} closeGo(); }
+function closeGo() { document.getElementById('goOverlay').classList.remove('show'); }
+
+// ===== FEEDBACK =====
+function setFB(m,t) { const e=document.getElementById('feedback');e.className='feedback '+t;e.textContent=m; }
+function setFBH(h,t) { const e=document.getElementById('feedback');e.className='feedback '+t;e.innerHTML=h; }
+function showRules() { document.getElementById('rulesOv').classList.add('show'); }
+function hideRules() { document.getElementById('rulesOv').classList.remove('show'); }
+
+// ===== ONLINE: ROOM CODE =====
+function genCode() {
+  const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s='';
+  for(let i=0;i<6;i++) s+=c[Math.floor(Math.random()*c.length)];
+  return s;
+}
+function pid(code) { return 'wordchain-'+code; }
+function setMax(n) {
+  maxPlayers = n;
+  document.querySelectorAll('.size-btn').forEach((b,i) => b.classList.toggle('active', (i===0&&n===2)||(i===1&&n===3)));
+}
+function copyCode() {
+  navigator.clipboard.writeText(roomCode).then(() => setOFB('lobbyFb','Code copied!','success'));
+}
+function setOFB(id,m,t) { const e=document.getElementById(id);e.className='feedback '+t;e.textContent=m; }
+
+// ===== ONLINE: CREATE ROOM =====
+function createRoom() {
+  myName = document.getElementById('nickInput').value.trim();
+  if (!myName) { setOFB('onlineFb','Enter a nickname','error'); return; }
+  roomCode = genCode();
+  isHost = true; onlineMode = true; conns = [];
+  playerOrder = [{id:'host',name:myName,index:0}]; myIdx = 0;
+  setOFB('onlineFb','Creating room...','info');
+
+  peer = new Peer(pid(roomCode));
+  peer.on('open', () => {
+    document.getElementById('onlineSetup').classList.remove('active');
+    document.getElementById('lobbyScreen').classList.add('active');
+    document.getElementById('roomCodeDisp').textContent = roomCode;
+    document.getElementById('lobbyStartBtn').style.display = 'block';
+    updateLobby();
+    setOFB('lobbyFb','Share the room code!','success');
+  });
+  peer.on('connection', handleHostConn);
+  peer.on('error', (err) => {
+    if (err.type==='unavailable-id') { roomCode=genCode(); peer.destroy(); createRoom(); }
+    else setOFB('onlineFb','Error: '+err.type,'error');
+  });
+}
+
+function handleHostConn(conn) {
+  conn.on('open', () => {
+    if (playerOrder.length >= maxPlayers) { conn.send({type:'error',msg:'Room is full'}); conn.close(); }
+  });
+  conn.on('data', (data) => {
+    if (data.type==='join') {
+      if (playerOrder.length>=maxPlayers) { conn.send({type:'error',msg:'Room is full'}); conn.close(); return; }
+      const pi = playerOrder.length;
+      playerOrder.push({id:conn.peer,name:data.name,index:pi});
+      conn._meta = {name:data.name,index:pi};
+      conns.push(conn);
+      broadcastLobby();
+      updateLobby();
+    }
+    if (data.type==='submit') hostReceive(conn, data);
+  });
+  conn.on('close', () => handleDisconnect(conn));
+  conn.on('error', () => handleDisconnect(conn));
+}
+
+function broadcastLobby() {
+  const d = {type:'lobby',players:playerOrder.map(p=>({name:p.name,index:p.index})),maxPlayers,level};
+  conns.forEach(c => { if(c.open) c.send(d); });
+}
+function broadcast(d) { conns.forEach(c => { if(c.open) c.send(d); }); }
+
+// ===== ONLINE: JOIN ROOM =====
+function joinRoom() {
+  myName = document.getElementById('nickInput').value.trim();
+  if (!myName) { setOFB('onlineFb','Enter a nickname','error'); return; }
+  roomCode = document.getElementById('codeInput').value.trim().toUpperCase();
+  if (!roomCode||roomCode.length!==6) { setOFB('onlineFb','Enter 6-char room code','error'); return; }
+  isHost = false; onlineMode = true; conns = [];
+  setOFB('onlineFb','Connecting...','info');
+
+  peer = new Peer();
+  peer.on('open', () => {
+    const conn = peer.connect(pid(roomCode), {reliable:true});
+    conn.on('open', () => {
+      conns = [conn];
+      conn.send({type:'join',name:myName});
+      document.getElementById('onlineSetup').classList.remove('active');
+      document.getElementById('lobbyScreen').classList.add('active');
+      document.getElementById('roomCodeDisp').textContent = roomCode;
+      document.getElementById('lobbyStartBtn').style.display = 'none';
+    });
+    conn.on('data', handleJoinerMsg);
+    conn.on('close', () => hostGone());
+    conn.on('error', () => setOFB('onlineFb','Connection failed','error'));
+  });
+  peer.on('error', (err) => {
+    if (err.type==='peer-unavailable') setOFB('onlineFb','Room not found','error');
+    else setOFB('onlineFb','Error: '+err.type,'error');
+  });
+}
+
+function handleJoinerMsg(data) {
+  switch(data.type) {
+    case 'lobby':
+      playerOrder = data.players;
+      maxPlayers = data.maxPlayers;
+      if (data.level) level = data.level;
+      myIdx = playerOrder.findIndex(p=>p.name===myName);
+      updateLobby();
+      break;
+    case 'start': startOnlineGame(data.gs); break;
+    case 'result': handleResult(data); break;
+    case 'gameover': onlineGameOver(data); break;
+    case 'error': setOFB('lobbyFb',data.msg,'error'); break;
+  }
+}
+
+// ===== LOBBY UI =====
+function updateLobby() {
+  const c = document.getElementById('lobbyPlayers');
+  document.getElementById('lobbyLabel').textContent = `Players (${playerOrder.length}/${maxPlayers})`;
+  c.innerHTML = '';
+  playerOrder.forEach((p,i) => {
+    const d = document.createElement('div'); d.className='lobby-player';
+    d.innerHTML = `<span class="player-dot" style="background:${PCOLORS[i]}"></span>
+      <span class="player-name" style="color:${PCOLORS[i]}">${p.name}</span>
+      ${i===0?'<span class="host-badge">HOST</span>':''}`;
+    c.appendChild(d);
+  });
+  const w = document.getElementById('lobbyWait');
+  const sb = document.getElementById('lobbyStartBtn');
+  if (playerOrder.length>=maxPlayers) { w.style.display='none'; if(isHost) sb.disabled=false; }
+  else { w.style.display='block'; sb.disabled=true; }
+}
+
+function leaveLobby() {
+  document.getElementById('lobbyScreen').classList.remove('active');
+  document.getElementById('onlineSetup').classList.add('active');
+  destroyPeer();
+}
+
+// ===== ONLINE: HOST START =====
+function hostStart() {
+  const starter = STARTERS[Math.floor(Math.random()*STARTERS.length)];
+  chain = [starter]; chainOwners = ['start']; usedWords = new Set([starter]);
+  requiredLetter = starter[starter.length-1].toUpperCase();
+  turnIdx = 0; isSubmitting = false;
+  pScores = {}; pMisses = {}; eliminated = new Set();
+  playerOrder.forEach(p => { pScores[p.name]=0; pMisses[p.name]=0; });
+
+  const gs = { chain:[...chain], owners:[...chainOwners], scores:{...pScores},
+    required:requiredLetter, turnIdx:0, playerOrder:playerOrder.map(p=>({name:p.name,index:p.index})),
+    level };
+  broadcast({type:'start',gs});
+  startOnlineGame(gs);
+}
+
+function startOnlineGame(gs) {
+  mode = 'online'; onlineMode = true;
+  document.getElementById('lobbyScreen').classList.remove('active');
+  document.getElementById('gameScreen').classList.add('active');
+  chain = gs.chain; chainOwners = gs.owners; usedWords = new Set(chain);
+  requiredLetter = gs.required; turnIdx = gs.turnIdx;
+  playerOrder = gs.playerOrder; level = gs.level || level;
+  pScores = gs.scores;
+  myIdx = playerOrder.findIndex(p=>p.name===myName);
+  pMisses = {}; eliminated = new Set();
+  playerOrder.forEach(p => pMisses[p.name]=0);
+
+  document.getElementById('restartBtn').style.display = 'none';
+  buildOnlineStats();
+  updateOnlineUI();
+  updateOnlineTurn();
+  const my = playerOrder[turnIdx].name===myName;
+  document.getElementById('wordInput').disabled = !my;
+  document.getElementById('submitBtn').disabled = !my;
+  document.getElementById('wordInput').value = '';
+  setFB(`Chain: "${chain[0]}" ${my?'- your turn!':'- waiting...'}`,'info');
+  if(my) document.getElementById('wordInput').focus();
+}
+
+function buildOnlineStats() {
+  const bar = document.getElementById('statsBar');
+  let h = '';
+  playerOrder.forEach((p,i) => {
+    const lbl = p.name===myName ? p.name+' (you)' : p.name;
+    h += `<div class="stat-box"><div class="label">${lbl}</div><div class="value p${i}" id="os${i}">0</div></div>`;
+  });
+  h += `<div class="stat-box"><div class="label">Chain</div><div class="value" id="cl">0</div></div>`;
+  h += `<div class="stat-box"><div class="label">Level</div><div class="value"><span class="lvl-badge">${level}</span></div></div>`;
+  bar.innerHTML = h;
+}
+
+function updateOnlineUI() {
+  playerOrder.forEach((p,i) => { const e=document.getElementById('os'+i); if(e) e.textContent=pScores[p.name]||0; });
+  const cl=document.getElementById('cl'); if(cl) cl.textContent=chain.length;
+  document.getElementById('promptLetter').textContent=requiredLetter;
+  renderOnlineChain();
+}
+
+function renderOnlineChain() {
+  const el=document.getElementById('chainDisplay'); el.innerHTML='';
+  chain.forEach((w,i) => {
+    if(i>0){const a=document.createElement('span');a.className='chain-arrow';a.textContent='\u2192';el.appendChild(a);}
+    const we=document.createElement('span');
+    let cls='chain-word';
+    if(i===chain.length-1) cls+=' latest';
+    const ow=chainOwners[i];
+    if(ow!=='start'){const oi=playerOrder.findIndex(p=>p.name===ow);if(oi>=0)cls+=` cw-p${oi}`;}
+    we.className=cls;
+    const lt=w.toUpperCase().split('');let h='';
+    lt.forEach((l,j)=>{h+=(j===0||j===lt.length-1)?`<span class="ll">${l}</span>`:l;});
+    we.innerHTML=h; el.appendChild(we);
+  });
+}
+
+function updateOnlineTurn() {
+  const ti=document.getElementById('turnInd');
+  ti.classList.remove('hidden');
+  const cp=playerOrder[turnIdx];
+  ti.textContent = cp.name===myName ? 'YOUR TURN' : cp.name.toUpperCase()+"'S TURN";
+  ti.className = 'turn-ind t'+cp.index;
+}
+
+// ===== ONLINE: SUBMIT =====
+async function submitOnline() {
+  if(playerOrder[turnIdx].name!==myName) return;
+  const input=document.getElementById('wordInput');
+  const word=input.value.trim().toLowerCase();
+  if(!word||word.length<2){setFB('Min 2 letters','error');return;}
+  if(word[0].toUpperCase()!==requiredLetter){setFB(`Must start with "${requiredLetter}"`,'error');input.select();return;}
+  if(usedWords.has(word)){setFB(`"${word}" already used!`,'error');input.select();return;}
+  if(!/^[a-z]+$/.test(word)){setFB('Only letters','error');return;}
+
+  isSubmitting=true;
+  document.getElementById('submitBtn').disabled=true;
+
+  if(isHost) {
+    setFBH('Checking<span class="spinner"></span>','info');
+    await hostValidate(word,myName);
+  } else {
+    setFBH('Submitting<span class="spinner"></span>','info');
+    conns[0].send({type:'submit',word});
+  }
+  isSubmitting=false;
+  document.getElementById('submitBtn').disabled=false;
+}
+
+// ===== ONLINE: HOST VALIDATION =====
+async function hostReceive(conn, data) {
+  const pn=conn._meta.name;
+  if(playerOrder[turnIdx].name!==pn){conn.send({type:'error',msg:'Not your turn'});return;}
+  await hostValidate(data.word,pn);
+}
+
+async function hostValidate(word,pn) {
+  word=word.trim().toLowerCase();
+  if(!word||word.length<2||word[0].toUpperCase()!==requiredLetter||usedWords.has(word)||!/^[a-z]+$/.test(word)) {
+    pMisses[pn]=(pMisses[pn]||0)+1;
+    if(pMisses[pn]>=3) { return hostEliminate(pn,word); }
+    const r={type:'result',valid:false,word,player:pn,def:'',pts:0,miss:pMisses[pn],gs:getGS()};
+    broadcast(r); handleResult(r); return;
+  }
+  try {
+    const res=await checkDict(word);
+    if(res.valid) {
+      pMisses[pn]=0;
+      const pts=calcPts(word);
+      pScores[pn]=(pScores[pn]||0)+pts;
+      chain.push(word);chainOwners.push(pn);usedWords.add(word);
+      requiredLetter=word[word.length-1].toUpperCase();
+      advTurn();
+      const r={type:'result',valid:true,word,player:pn,def:res.def,pts,gs:getGS()};
+      broadcast(r);handleResult(r);
+    } else {
+      pMisses[pn]=(pMisses[pn]||0)+1;
+      if(pMisses[pn]>=3) { return hostEliminate(pn,word); }
+      const r={type:'result',valid:false,word,player:pn,def:'',pts:0,miss:pMisses[pn],gs:getGS()};
+      broadcast(r);handleResult(r);
+    }
+  } catch(e) {
+    const r={type:'result',valid:false,word,player:pn,def:'',pts:0,netErr:true,gs:getGS()};
+    broadcast(r);handleResult(r);
+  }
+}
+
+function hostEliminate(pn,word) {
+  eliminated.add(pn);
+  const active=playerOrder.filter(p=>!eliminated.has(p.name));
+  if(active.length<=1) {
+    const winner=active.length===1?active[0].name:'Nobody';
+    const g={type:'gameover',winner,reason:`${pn} made 3 invalid attempts.`,scores:{...pScores}};
+    broadcast(g);onlineGameOver(g);return;
+  }
+  if(playerOrder[turnIdx].name===pn) advTurn();
+  const r={type:'result',valid:false,word,player:pn,def:'',pts:0,elim:true,gs:getGS()};
+  broadcast(r);handleResult(r);
+}
+
+function advTurn() {
+  let a=0;
+  do{turnIdx=(turnIdx+1)%playerOrder.length;a++;}
+  while(eliminated.has(playerOrder[turnIdx].name)&&a<playerOrder.length);
+}
+
+function getGS() {
+  return {chain:[...chain],owners:[...chainOwners],scores:{...pScores},required:requiredLetter,turnIdx,
+    playerOrder:playerOrder.map(p=>({name:p.name,index:p.index})),level};
+}
+
+// ===== ONLINE: HANDLE RESULT =====
+function handleResult(d) {
+  if(d.gs){chain=d.gs.chain;chainOwners=d.gs.owners;pScores=d.gs.scores;requiredLetter=d.gs.required;turnIdx=d.gs.turnIdx;usedWords=new Set(chain);}
+  if(d.valid) {
+    if(d.player===myName){setFB(`+${d.pts}! "${d.word}"${d.def?' — '+d.def:''}`,'success');document.getElementById('wordInput').value='';}
+    else setFB(`${d.player} played "${d.word}" (+${d.pts})`,'info');
+  } else {
+    if(d.elim) setFB(`${d.player} eliminated! (3 invalid words)`,'error');
+    else if(d.netErr) setFB('Network error','error');
+    else if(d.player===myName) { setFB(`"${d.word}" not in dictionary (${d.miss||'?'}/3)`,'error'); document.getElementById('wordInput').select(); }
+    else setFB(`${d.player}: invalid word`,'info');
+  }
+  updateOnlineUI();updateOnlineTurn();
+  const my=playerOrder[turnIdx].name===myName;
+  document.getElementById('wordInput').disabled=!my;
+  document.getElementById('submitBtn').disabled=!my;
+  if(my) document.getElementById('wordInput').focus();
+}
+
+// ===== ONLINE: GAME OVER =====
+function onlineGameOver(d) {
+  document.getElementById('wordInput').disabled=true;
+  document.getElementById('submitBtn').disabled=true;
+  const t=document.getElementById('goTitle');
+  const tx=document.getElementById('goText');
+  const won=d.winner===myName;
+  t.textContent=won?'YOU WIN!':d.winner+' WINS';
+  t.style.color=won?'#4caf50':'#e74c3c';
+  let sc=Object.entries(d.scores).sort((a,b)=>b[1]-a[1]).map(([n,s])=>`${n===myName?'<strong>'+n+'</strong>':n}: ${s}`).join(' &middot; ');
+  tx.innerHTML=`${d.reason||''}<br><br>${sc}<br>Chain: <strong>${chain.length}</strong>`;
+  document.getElementById('goOverlay').classList.add('show');
+}
+
+// ===== ONLINE: DISCONNECT =====
+function handleDisconnect(conn) {
+  if(!onlineMode) return;
+  const pn=conn._meta?.name; if(!pn) return;
+  conns=conns.filter(c=>c!==conn);
+  eliminated.add(pn);
+  const active=playerOrder.filter(p=>!eliminated.has(p.name));
+  if(active.length<=1){
+    const w=active.length===1?active[0].name:myName;
+    const g={type:'gameover',winner:w,reason:`${pn} disconnected.`,scores:{...pScores}};
+    broadcast(g);onlineGameOver(g);return;
+  }
+  if(playerOrder[turnIdx].name===pn) advTurn();
+  setFB(`${pn} disconnected`,'error');
+  broadcast({type:'result',valid:false,word:'',player:pn,def:'',pts:0,elim:true,gs:getGS()});
+  updateOnlineUI();updateOnlineTurn();
+}
+function hostGone() {
+  document.getElementById('wordInput').disabled=true;
+  document.getElementById('submitBtn').disabled=true;
+  const t=document.getElementById('goTitle');t.textContent='DISCONNECTED';t.style.color='#e74c3c';
+  document.getElementById('goText').innerHTML='Host disconnected. Game over.';
+  document.getElementById('goOverlay').classList.add('show');
+}
+function destroyPeer() {
+  if(peer){peer.destroy();peer=null;} conns=[];onlineMode=false;isHost=false;roomCode='';playerOrder=[];
+}
+
+// ===== KEYBOARD =====
+document.getElementById('wordInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();submitWord();}});
+</script>
+</body>
+</html>
