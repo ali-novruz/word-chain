@@ -123,6 +123,23 @@
   .rules-box .pr span:last-child{color:#f5a623;font-weight:700}
 
   .lvl-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.6rem;font-weight:700;letter-spacing:1px;background:rgba(245,166,35,.1);color:#f5a623;margin-left:6px}
+
+  /* Timer toggle */
+  .timer-option{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;width:100%;justify-content:space-between}
+  .timer-label{font-size:.8rem;font-weight:600;color:#ccc}.timer-sub{font-size:.6rem;color:#666}
+  .switch{position:relative;width:44px;height:24px;flex-shrink:0}.switch input{opacity:0;width:0;height:0}
+  .slider-sw{position:absolute;cursor:pointer;inset:0;background:#333;border-radius:24px;transition:.2s}.slider-sw::before{content:'';position:absolute;height:18px;width:18px;left:3px;bottom:3px;background:#888;border-radius:50%;transition:.2s}
+  .switch input:checked+.slider-sw{background:rgba(245,166,35,.3)}.switch input:checked+.slider-sw::before{transform:translateX(20px);background:#f5a623}
+
+  /* Timer display */
+  .timer-wrap{display:flex;flex-direction:column;align-items:center;margin-bottom:10px}
+  .timer-wrap.hidden{display:none!important}
+  .timer-text{font-size:1.4rem;font-weight:800;color:#f5a623;font-variant-numeric:tabular-nums;margin-bottom:4px}
+  .timer-text.danger{color:#e74c3c;animation:pulse .5s ease-in-out infinite}
+  .timer-bar-wrap{width:160px;height:5px;background:#2a2a2a;border-radius:3px;overflow:hidden}
+  .timer-bar{height:100%;background:#f5a623;border-radius:3px;transition:width .1s linear}
+  .timer-bar.danger{background:#e74c3c}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 </style>
 </head>
 <body>
@@ -164,6 +181,10 @@
     <div class="level-btn" onclick="pickLevel('C2')"><div class="lvl">C2</div><div class="lvl-name">Proficiency</div></div>
   </div>
   <div class="level-info" id="levelInfo">Very common everyday words</div>
+  <div class="timer-option" id="timerToggle">
+    <div><div class="timer-label">Time Limit</div><div class="timer-sub">7 seconds per turn</div></div>
+    <label class="switch"><input type="checkbox" id="timerCheck"><span class="slider-sw"></span></label>
+  </div>
   <button class="btn-go btn-full" onclick="confirmLevel()">Start Game</button>
   <button class="btn-sec btn-full" onclick="backFromLevel()">Back</button>
 </div>
@@ -201,6 +222,10 @@
 <!-- GAME SCREEN -->
 <div class="game-screen" id="gameScreen">
   <div class="turn-ind hidden" id="turnInd">YOUR TURN</div>
+  <div class="timer-wrap hidden" id="timerWrap">
+    <div class="timer-text" id="timerText">7</div>
+    <div class="timer-bar-wrap"><div class="timer-bar" id="timerBar"></div></div>
+  </div>
   <div class="stats" id="statsBar"></div>
   <div class="prompt-area">
     <div class="prompt-label">Next word must start with</div>
@@ -241,7 +266,7 @@
     <p>All words verified against English dictionary. No repeats. Min 2 letters.</p>
     <p><strong style="color:#f5a623">Solo:</strong> Build the longest chain.</p>
     <p><strong style="color:#e74c3c">VS Bot:</strong> Take turns — bot uses words from Datamuse API at your selected difficulty level.</p>
-    <p><strong style="color:#9b59b6">Online:</strong> Play with 2-3 friends via room code. 3 invalid words = eliminated!</p>
+    <p><strong style="color:#9b59b6">Online:</strong> Play with 2-3 friends via room code. 7s time limit per turn. 3 invalid words or timeouts = eliminated!</p>
     <div class="pt">
       <div class="pr"><span>2 letters</span><span>+1</span></div>
       <div class="pr"><span>3 letters</span><span>+2</span></div>
@@ -286,6 +311,12 @@ let requiredLetter = '';
 let isSubmitting = false;
 let isPlayerTurn = true;
 let missCount = 0;
+
+// Timer state
+const TURN_TIME = 7;
+let timerEnabled = false;
+let timerInterval = null;
+let timeLeft = 0;
 
 // Datamuse word cache: { 'a': [{word, freq},...], ... }
 let wordCache = {};
@@ -363,6 +394,7 @@ function calcPts(w) { const l=w.length; if(l<=2)return 1;if(l===3)return 2;if(l=
 function pickMode(m) {
   mode = m;
   document.getElementById('modeScreen').classList.add('hidden');
+  document.getElementById('timerToggle').style.display = m === 'online' ? 'none' : 'flex';
   if (m === 'online') {
     document.getElementById('levelScreen').classList.add('active');
     document.getElementById('levelScreen').dataset.next = 'online';
@@ -381,8 +413,10 @@ function confirmLevel() {
   const next = document.getElementById('levelScreen').dataset.next;
   document.getElementById('levelScreen').classList.remove('active');
   if (next === 'online') {
+    timerEnabled = true;
     document.getElementById('onlineSetup').classList.add('active');
   } else {
+    timerEnabled = document.getElementById('timerCheck').checked;
     startLocalGame(next);
   }
 }
@@ -397,6 +431,7 @@ function backFromOnline() {
   destroyPeer();
 }
 function backToMenu() {
+  stopTimer();
   document.getElementById('gameScreen').classList.remove('active');
   document.getElementById('lobbyScreen').classList.remove('active');
   document.getElementById('onlineSetup').classList.remove('active');
@@ -426,6 +461,7 @@ function startLocalGame(m) {
   document.getElementById('submitBtn').disabled = false;
   document.getElementById('restartBtn').style.display = '';
   document.getElementById('wordInput').focus();
+  if (timerEnabled) startTimer();
 }
 
 function buildLocalStats() {
@@ -520,7 +556,10 @@ async function submitWord() {
       if (mode==='bot') {
         isPlayerTurn = false; setTurn();
         input.disabled = true;
+        if (timerEnabled) stopTimer();
         setTimeout(() => botTurn(), 1000+Math.random()*800);
+      } else if (timerEnabled) {
+        startTimer();
       }
     } else {
       setFB(`"${word}" not found in dictionary`,'error');
@@ -558,9 +597,11 @@ async function botTurn() {
   isPlayerTurn = true; missCount = 0; setTurn();
   document.getElementById('wordInput').disabled = false;
   document.getElementById('wordInput').focus();
+  if (timerEnabled) startTimer();
 }
 
 function localGameOver(won, reason) {
+  stopTimer();
   document.getElementById('wordInput').disabled = true;
   document.getElementById('submitBtn').disabled = true;
   const t = document.getElementById('goTitle');
@@ -583,6 +624,77 @@ function setFB(m,t) { const e=document.getElementById('feedback');e.className='f
 function setFBH(h,t) { const e=document.getElementById('feedback');e.className='feedback '+t;e.innerHTML=h; }
 function showRules() { document.getElementById('rulesOv').classList.add('show'); }
 function hideRules() { document.getElementById('rulesOv').classList.remove('show'); }
+
+// ===== TIMER =====
+function startTimer() {
+  stopTimer();
+  timeLeft = TURN_TIME * 10;
+  const wrap = document.getElementById('timerWrap');
+  const text = document.getElementById('timerText');
+  const bar = document.getElementById('timerBar');
+  wrap.classList.remove('hidden');
+  text.textContent = TURN_TIME;
+  text.className = 'timer-text';
+  bar.style.width = '100%';
+  bar.className = 'timer-bar';
+  timerInterval = setInterval(() => {
+    if (isSubmitting) return;
+    timeLeft--;
+    if (timeLeft <= 0) {
+      clearInterval(timerInterval); timerInterval = null;
+      text.textContent = '0'; text.classList.add('danger');
+      bar.style.width = '0%'; bar.classList.add('danger');
+      onTimerExpire();
+      return;
+    }
+    const secs = Math.ceil(timeLeft / 10);
+    text.textContent = secs;
+    bar.style.width = (timeLeft / (TURN_TIME * 10) * 100) + '%';
+    if (secs <= 3) { text.classList.add('danger'); bar.classList.add('danger'); }
+  }, 100);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  const wrap = document.getElementById('timerWrap');
+  if (wrap) wrap.classList.add('hidden');
+}
+function onTimerExpire() {
+  if (isSubmitting) { setTimeout(onTimerExpire, 200); return; }
+  if (timerInterval) return;
+  stopTimer();
+  if (onlineMode) {
+    if (playerOrder[turnIdx]?.name !== myName) return;
+    document.getElementById('wordInput').disabled = true;
+    document.getElementById('submitBtn').disabled = true;
+    document.getElementById('wordInput').value = '';
+    if (isHost) {
+      pMisses[myName] = (pMisses[myName]||0)+1;
+      if (pMisses[myName]>=3) { hostEliminate(myName,''); return; }
+      advTurn();
+      const r = {type:'result',valid:false,word:'',player:myName,def:'',pts:0,miss:pMisses[myName],timeout:true,gs:getGS()};
+      broadcast(r); handleResult(r);
+    } else {
+      mqttSend({type:'timeout'});
+      setFB("Time's up!",'error');
+    }
+  } else if (mode === 'solo') {
+    document.getElementById('wordInput').disabled = true;
+    document.getElementById('submitBtn').disabled = true;
+    const t = document.getElementById('goTitle');
+    const tx = document.getElementById('goText');
+    t.textContent = "TIME'S UP!"; t.style.color = '#e74c3c';
+    tx.innerHTML = `You ran out of time!<br><br>Score: <strong>${pScore}</strong><br>Chain: <strong>${chain.length}</strong> words`;
+    document.getElementById('goOverlay').classList.add('show');
+  } else if (mode === 'bot') {
+    missCount++;
+    if (missCount >= 3) { localGameOver(false, '3 timeouts in a row.'); return; }
+    setFB(`Time's up! (${missCount}/3 misses)`, 'error');
+    document.getElementById('wordInput').value = '';
+    isPlayerTurn = false; setTurn();
+    document.getElementById('wordInput').disabled = true;
+    setTimeout(() => botTurn(), 1000 + Math.random() * 800);
+  }
+}
 
 // ===== ONLINE: ROOM CODE =====
 function genCode() {
@@ -720,6 +832,15 @@ function handleHostMessage(data) {
     updateLobby();
   }
   if (data.type==='submit') hostReceiveMsg(data);
+  if (data.type==='timeout') {
+    const pn = data._name;
+    if (playerOrder[turnIdx]?.name !== pn) return;
+    pMisses[pn] = (pMisses[pn]||0)+1;
+    if (pMisses[pn]>=3) { hostEliminate(pn,''); return; }
+    advTurn();
+    const r = {type:'result',valid:false,word:'',player:pn,def:'',pts:0,miss:pMisses[pn],timeout:true,gs:getGS()};
+    broadcast(r); handleResult(r);
+  }
   if (data.type==='leave') handleMqttDisconnect(data.cid || data._from, data._name);
 }
 
@@ -891,7 +1012,7 @@ function startOnlineGame(gs) {
   document.getElementById('submitBtn').disabled = !my;
   document.getElementById('wordInput').value = '';
   setFB(`Chain: "${chain[0]}" ${my?'- your turn!':'- waiting...'}`,'info');
-  if(my) document.getElementById('wordInput').focus();
+  if(my) { document.getElementById('wordInput').focus(); startTimer(); }
 }
 
 function buildOnlineStats() {
@@ -1031,6 +1152,10 @@ function handleResult(d) {
     else setFB(`${d.player} played "${d.word}" (+${d.pts})`,'info');
   } else {
     if(d.elim) setFB(`${d.player} eliminated! (3 invalid words)`,'error');
+    else if(d.timeout) {
+      if(d.player===myName) setFB(`Time's up! (${d.miss||'?'}/3 misses)`,'error');
+      else setFB(`${d.player} ran out of time`,'info');
+    }
     else if(d.netErr) setFB('Network error','error');
     else if(d.player===myName) { setFB(`"${d.word}" not in dictionary (${d.miss||'?'}/3)`,'error'); document.getElementById('wordInput').select(); }
     else setFB(`${d.player}: invalid word`,'info');
@@ -1039,11 +1164,13 @@ function handleResult(d) {
   const my=playerOrder[turnIdx].name===myName;
   document.getElementById('wordInput').disabled=!my;
   document.getElementById('submitBtn').disabled=!my;
-  if(my) document.getElementById('wordInput').focus();
+  if(my) { document.getElementById('wordInput').focus(); startTimer(); }
+  else stopTimer();
 }
 
 // ===== ONLINE: GAME OVER =====
 function onlineGameOver(d) {
+  stopTimer();
   document.getElementById('wordInput').disabled=true;
   document.getElementById('submitBtn').disabled=true;
   const t=document.getElementById('goTitle');
@@ -1058,6 +1185,7 @@ function onlineGameOver(d) {
 
 // ===== ONLINE: DISCONNECT =====
 function hostGone() {
+  stopTimer();
   document.getElementById('wordInput').disabled=true;
   document.getElementById('submitBtn').disabled=true;
   const t=document.getElementById('goTitle');t.textContent='DISCONNECTED';t.style.color='#e74c3c';
