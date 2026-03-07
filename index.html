@@ -394,7 +394,7 @@ function calcPts(w) { const l=w.length; if(l<=2)return 1;if(l===3)return 2;if(l=
 function pickMode(m) {
   mode = m;
   document.getElementById('modeScreen').classList.add('hidden');
-  document.getElementById('timerToggle').style.display = m === 'online' ? 'none' : 'flex';
+  document.getElementById('timerToggle').style.display = 'flex';
   if (m === 'online') {
     document.getElementById('levelScreen').classList.add('active');
     document.getElementById('levelScreen').dataset.next = 'online';
@@ -412,11 +412,10 @@ function pickLevel(l) {
 function confirmLevel() {
   const next = document.getElementById('levelScreen').dataset.next;
   document.getElementById('levelScreen').classList.remove('active');
+  timerEnabled = document.getElementById('timerCheck').checked;
   if (next === 'online') {
-    timerEnabled = true;
     document.getElementById('onlineSetup').classList.add('active');
   } else {
-    timerEnabled = document.getElementById('timerCheck').checked;
     startLocalGame(next);
   }
 }
@@ -811,7 +810,7 @@ async function createRoom() {
     updateLobby();
     setOFB('lobbyFb','Share the room code!','success');
     // Announce room exists
-    mqttSend({type:'room',maxPlayers,level});
+    mqttSend({type:'room',maxPlayers,level,timerEnabled});
     startHeartbeat();
   } catch(e) {
     console.error('[HOST] MQTT error:', e);
@@ -845,7 +844,7 @@ function handleHostMessage(data) {
 }
 
 function broadcastLobby() {
-  mqttSend({type:'lobby',players:playerOrder.map(p=>({name:p.name,index:p.index,cid:p.cid})),maxPlayers,level});
+  mqttSend({type:'lobby',players:playerOrder.map(p=>({name:p.name,index:p.index,cid:p.cid})),maxPlayers,level,timerEnabled});
 }
 function broadcast(d) { mqttSend(d); }
 
@@ -922,6 +921,7 @@ function handleJoinerMsg(data) {
       playerOrder = data.players;
       maxPlayers = data.maxPlayers;
       if (data.level) level = data.level;
+      if (data.timerEnabled !== undefined) timerEnabled = data.timerEnabled;
       myIdx = playerOrder.findIndex(p=>p.name===myName);
       updateLobby();
       break;
@@ -986,7 +986,7 @@ function hostStart() {
 
   const gs = { chain:[...chain], owners:[...chainOwners], scores:{...pScores},
     required:requiredLetter, turnIdx:0, playerOrder:playerOrder.map(p=>({name:p.name,index:p.index})),
-    level };
+    level, timerEnabled };
   broadcast({type:'start',gs});
   startOnlineGame(gs);
 }
@@ -998,6 +998,7 @@ function startOnlineGame(gs) {
   chain = gs.chain; chainOwners = gs.owners; usedWords = new Set(chain);
   requiredLetter = gs.required; turnIdx = gs.turnIdx;
   playerOrder = gs.playerOrder; level = gs.level || level;
+  if (gs.timerEnabled !== undefined) timerEnabled = gs.timerEnabled;
   pScores = gs.scores;
   myIdx = playerOrder.findIndex(p=>p.name===myName);
   pMisses = {}; eliminated = new Set();
@@ -1012,7 +1013,7 @@ function startOnlineGame(gs) {
   document.getElementById('submitBtn').disabled = !my;
   document.getElementById('wordInput').value = '';
   setFB(`Chain: "${chain[0]}" ${my?'- your turn!':'- waiting...'}`,'info');
-  if(my) { document.getElementById('wordInput').focus(); startTimer(); }
+  if(my) { document.getElementById('wordInput').focus(); if(timerEnabled) startTimer(); }
 }
 
 function buildOnlineStats() {
@@ -1164,7 +1165,7 @@ function handleResult(d) {
   const my=playerOrder[turnIdx].name===myName;
   document.getElementById('wordInput').disabled=!my;
   document.getElementById('submitBtn').disabled=!my;
-  if(my) { document.getElementById('wordInput').focus(); startTimer(); }
+  if(my) { document.getElementById('wordInput').focus(); if(timerEnabled) startTimer(); }
   else stopTimer();
 }
 
